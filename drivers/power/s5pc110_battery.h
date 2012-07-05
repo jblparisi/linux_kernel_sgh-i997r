@@ -155,6 +155,11 @@ enum {
 	CHARGING_MODE_BOOTING,
 	BATT_TEMP_CHECK,
 	BATT_FULL_CHECK,
+<<<<<<< HEAD
+=======
+	BATT_TYPE,
+	DISABLE_CHARGER,
+>>>>>>> 2a1d0ac... updated to build 5
 };
 #endif
 

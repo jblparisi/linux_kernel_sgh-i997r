@@ -109,7 +109,11 @@ struct chg_data {
 };
 
 static bool lpm_charging_mode;
+<<<<<<< HEAD
 extern struct usb_gadget *usb_gadget_p;
+=======
+static bool disable_charger;
+>>>>>>> 2a1d0ac... updated to build 5
 
 static char *supply_list[] = {
 	"battery",
@@ -252,6 +256,11 @@ static struct device_attribute s3c_battery_attrs[] = {
 	SEC_BATTERY_ATTR(charging_mode_booting),
 	SEC_BATTERY_ATTR(batt_temp_check),
 	SEC_BATTERY_ATTR(batt_full_check),
+<<<<<<< HEAD
+=======
+	SEC_BATTERY_ATTR(batt_type),
+	SEC_BATTERY_ATTR(disable_charger),
+>>>>>>> 2a1d0ac... updated to build 5
 };
 
 extern u8 FSA9480_Get_JIG_Status(void);
@@ -1776,7 +1785,7 @@ static int s3c_cable_status_update(struct chg_data *chg)
 	/* if max8998 has detected vdcin */
 	if (max8998_check_vdcin() == 1) {
 		vdc_status = 1;
-		if (chg->bat_info.dis_reason) {
+		if (chg->bat_info.dis_reason || disable_charger) {
 			/* have vdcin, but cannot charge */
 			chg->charging = 0;
 			ret = max8998_charging_control(chg);
@@ -2074,6 +2083,9 @@ static ssize_t s3c_bat_show_attrs(struct device *dev,
 	case BATT_FULL_CHECK:
 		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n",  chg->set_batt_full);
 		break;
+	case DISABLE_CHARGER:
+		i += scnprintf(buf + i, PAGE_SIZE - i, "%d\n", disable_charger);
+		break;
 	default:
 		i = -EINVAL;
 	}
@@ -2189,6 +2201,13 @@ static ssize_t s3c_bat_store_attrs(struct device *dev, struct device_attribute *
 			ret = count;
 		}
 		break;
+	case DISABLE_CHARGER:
+		if (sscanf(buf, "%d\n", &x) == 1) {
+			disable_charger = x;
+			ret = count;
+		}
+		break;
+
 	default:
 		ret = -EINVAL;
 	}
@@ -2470,6 +2489,7 @@ static __devinit int max8998_charger_probe(struct platform_device *pdev)
 		vADC_regulator_intialized = 1;
 	}
 
+<<<<<<< HEAD
 	if (IS_ERR_OR_NULL(vADC_regulator) ) 
 	{
 		pr_err("vADC_regulator  not initialized\n");
@@ -2487,6 +2507,10 @@ static __devinit int max8998_charger_probe(struct platform_device *pdev)
 
 	check_lpm_charging_mode(chg);
   
+=======
+	disable_charger = 0;
+
+>>>>>>> 2a1d0ac... updated to build 5
 	/* init power supplier framework */
 	ret = power_supply_register(&pdev->dev, &chg->psy_bat);
 	if (ret) {
