@@ -76,11 +76,17 @@ void __s5p_tv_powerset_dac_onoff(bool on)
 	TVPMPRINTK("(%d)\n\r", on);
 
 	if (on) {
-		regulator_enable(s5ptv_status.tv_tvout);
+
+#if !defined (CONFIG_S5PC110_DEMPSEY_BOARD)
+		regulator_enable(s5ptv_status.tv_tvout);	
+#endif
 		writel(S5P_DAC_ENABLE, S5P_DAC_CONTROL);
 	} else {
 		writel(S5P_DAC_DISABLE, S5P_DAC_CONTROL);
+
+#if !defined (CONFIG_S5PC110_DEMPSEY_BOARD)
 		regulator_disable(s5ptv_status.tv_tvout);
+#endif
 	}
 
 	TVPMPRINTK("(0x%08x)\n\r", readl(S5P_DAC_CONTROL));
@@ -114,6 +120,14 @@ void __s5p_tv_poweron(void)
 	if (regulator_enable(s5ptv_status.tv_regulator))
 		pr_err("%s : failed to turn tv-power-domain on\n", __func__);
 
+#if defined (CONFIG_S5PC110_DEMPSEY_BOARD)
+        if (regulator_enable(s5ptv_status.tv_tv))
+        pr_err("%s : failed to turn tv-power-domain on\n", __func__);
+
+        if (regulator_enable(s5ptv_status.tv_tvout))
+        pr_err("%s : failed to turn tv-power-domain on\n", __func__);
+#endif
+
 	TVPMPRINTK("0x%08x, 0x%08x)\n\r", readl(S5P_NORMAL_CFG),
 		readl(S5P_BLK_PWR_STAT));
 }
@@ -121,6 +135,7 @@ void __s5p_tv_poweron(void)
 
 void __s5p_tv_poweroff(void)
 {
+	int regulator_status = 0;
 	TVPMPRINTK("()\n\r");
 
 	__s5p_tv_powerset_dac_onoff(0);
@@ -128,6 +143,18 @@ void __s5p_tv_poweroff(void)
 	if (regulator_disable(s5ptv_status.tv_regulator))
 		pr_err("%s : failed to turn tv-power-domain off\n", __func__);
 
+#if defined (CONFIG_S5PC110_DEMPSEY_BOARD)
+        if (regulator_disable(s5ptv_status.tv_tv))
+        pr_err("%s : failed to turn tv-power-domain off\n", __func__);
+
+
+        if (regulator_disable(s5ptv_status.tv_tvout))
+        pr_err("%s : failed to turn tv-power-domain off\n", __func__);
+
+#endif
+
 	TVPMPRINTK("0x%08x, 0x%08x)\n\r", readl(S5P_NORMAL_CFG),
 		readl(S5P_BLK_PWR_STAT));
 }
+
+

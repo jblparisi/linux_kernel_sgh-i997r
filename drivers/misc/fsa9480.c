@@ -31,6 +31,7 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <mach/param.h>
+#include <linux/regulator/consumer.h>
 #if defined (CONFIG_S5PC110_HAWK_BOARD) || defined (CONFIG_S5PC110_KEPLER_BOARD) || defined(CONFIG_S5PC110_DEMPSEY_BOARD) || defined (CONFIG_S5PC110_VIBRANTPLUS_BOARD) // mr work 
 #include <linux/delay.h>
 #endif
@@ -110,6 +111,12 @@
 #define INT_ATTACH		(1 << 0)
 //#if defined (CONFIG_S5PC110_HAWK_BOARD) || defined (CONFIG_S5PC110_KEPLER_BOARD) 	//Build Error
 // add hdlnc_opk
+
+#if defined(CONFIG_VIDEO_MHL_V1)
+void fsa9480_enable_spk(void );//gaurav9480_Enable_SPK(1);
+void FSA9480_MhlSwitchSel(bool );//gaurav
+#endif 
+
 static u8 MicroUSBStatus=0;
 static u8 MicroJigUSBOnStatus=0;
 static u8 MicroJigUSBOffStatus=0;
@@ -126,8 +133,16 @@ struct fsa9480_usbsw {
 	int				dev2;
 	int				mansw;
 	int 			dev_id;
+#if defined(CONFIG_VIDEO_MHL_V1)
+	struct delayed_work mhl_work;
+#endif
 };
+#if defined(CONFIG_VIDEO_MHL_V1)
 
+struct workqueue_struct *mhl_workqueue;
+
+static struct wake_lock MHL_wake_lock;
+#endif
 static struct fsa9480_usbsw *local_usbsw;
 #ifdef CONFIG_VIDEO_MHL_V1
 #include<linux/power_supply.h>
@@ -136,6 +151,17 @@ static struct fsa9480_usbsw *local_usbsw;
 bool gv_mhl_sw_state = 0;
 //static struct workqueue_struct *fsa_mhl_workqueue;
 //static struct work_struct mhl_start_work;
+
+extern int SII9234_i2c_status;
+extern int max8893_i2cprobe_status;
+extern bool S5p_TvProbe_status; //Rajucm
+
+#define MHL_INIT_COND (SII9234_i2c_status &&  max8893_i2cprobe_status && S5p_TvProbe_status)
+static DECLARE_WAIT_QUEUE_HEAD(fsa9480_MhlWaitEvent);
+
+
+extern int s5p_hpd_get_state(void);
+extern void mhl_hpd_handle(bool en);
 
 extern u8 mhl_cable_status;
 extern bool mhl_vbus; //3355
@@ -172,21 +198,38 @@ void EnableFSA9480Interrupts(void)
 } 
 
 
-#if 0
+#if defined(CONFIG_VIDEO_MHL_V1)
 //Rajucm: This function set the fsa audio dock status and update the audio driver state variable
 static void FSA9480_AudioDockEnable(void)
 {	
-	set_dock_state((int)HOME_DOCK_INSERTED);
-	FSA9480_Enable_SPK(1);
-	g_dock = HOME_DOCK_INSERTED;
+	struct fsa9480_platform_data *pdata = local_usbsw->pdata;
+	if (pdata->deskdock_cb)
+		pdata->deskdock_cb(FSA9480_ATTACHED);
+	fsa9480_enable_spk();//gaurav
 }
 //Rajucm: This function will reset the fsa audio dock status and update the audio driver state variable
 static void FSA9480_AudioDockDisable(void)
 {
-	DEBUG_FSA9480("FSA9480_Disable_Audio_Dock####\n");
+	struct i2c_client *client =  local_usbsw->client;
+	struct fsa9480_platform_data *pdata = local_usbsw->pdata;
+	int ret = 0;
+
+	//DEBUG_FSA9480("FSA9480_Disable_Audio_Dock####\n");//gaurav
 	FSA9480_AudioDockConnectionStatus = 0;
-	set_dock_state((int)DOCK_REMOVED);
-	g_dock = DOCK_REMOVED;
+	if (pdata->deskdock_cb)
+		pdata->deskdock_cb(FSA9480_DETACHED);
+
+	ret = i2c_smbus_read_byte_data(client,
+			FSA9480_REG_CTRL);
+	if (ret < 0)
+		dev_err(&client->dev,
+			"%s: err %d\n", __func__, ret);
+	
+	ret = i2c_smbus_write_byte_data(client,
+			FSA9480_REG_CTRL, ret | CON_MANUAL_SW);
+	if (ret < 0)
+		dev_err(&client->dev,
+			"%s: err %d\n", __func__, ret);
 }
 #endif
 /* Rajucm: This function is implimented to clear unwanted/garbage interrupts and hook audio dock functionality. 
@@ -195,20 +238,24 @@ static void FSA9480_AudioDockDisable(void)
  */
 void FSA9480_CheckAndHookAudioDock(void)//Rajucm
 {
-#if 0
+#if defined(CONFIG_VIDEO_MHL_V1)
 	FSA9480_AudioDockConnectionStatus++;
 	FSA9480_MhlSwitchSel(0);//Rajucm
 	FSA9480_AudioDockEnable();
 #endif
 }
 
+
 void FSA9480_MhlSwitchSel(bool sw) //Rajucm
 {
 	struct i2c_client *client = local_usbsw->client;
 	struct power_supply *mhl_power_supply = power_supply_get_by_name("battery");
 	union power_supply_propval value;
+#if defined(CONFIG_VIDEO_MHL_V1)
 	
-    printk(KERN_ERR "[FSA] mutex_lock\n");
+	wake_lock_timeout(&MHL_wake_lock, 3 * HZ);
+#endif	
+    	//printk(KERN_ERR "[FSA] mutex_lock\n");
 	//mutex_lock(&FSA9480_MhlSwitchSel_lock);//Rajucm: avoid race condtion between mhl and hpd
 	if(sw)
 	{
@@ -237,6 +284,10 @@ void FSA9480_MhlSwitchSel(bool sw) //Rajucm
 		  //  printk("Fail to turn %s MHL Charging\n",sw?"on":"off");
 
                 mhl_vbus = false;
+	 	if(s5p_hpd_get_state()) //since hdmi irq is cleared hpd state might be still high hence initiate hdmi hpd 
+                {
+                        mhl_hpd_handle(false);
+                }
 		sii9234_cfg_power(0);	//Turn Off power to SiI9234
 	}
 
@@ -252,7 +303,7 @@ void FSA9480_MhlSwitchSel(bool sw) //Rajucm
 	/******************RAJUCM:FSA-MHL-FSA Switching End*******************************/
 	//mutex_unlock(&FSA9480_MhlSwitchSel_lock);//Rajucm
 
-    printk("[FSA] mutex_unlock\n");
+    	//printk("[FSA] mutex_unlock\n");
 }
 EXPORT_SYMBOL(FSA9480_MhlSwitchSel);
 
@@ -425,9 +476,10 @@ static ssize_t fsa9480_show_manualsw(struct device *dev,
 	if (value < 0)
 		dev_err(&client->dev, "%s: err %d\n", __func__, value);
 
+#ifdef CONFIG_S5PC110_DEMPSEY_BOARD
 	if(usbsw->dev_id == 0)
 		value = value & ~0x03;
-
+#endif
 	if (value == SW_VAUDIO)
 		return sprintf(buf, "VAUDIO\n");
 	else if (value == SW_UART)
@@ -480,9 +532,10 @@ static ssize_t fsa9480_set_manualsw(struct device *dev,
 		return 0;
 	}
 
+#ifdef CONFIG_S5PC110_DEMPSEY_BOARD
 	if(usbsw->dev_id == 0)
 		path = (path | 0x03);
-
+#endif
 	usbsw->mansw = path;
 
 	ret = i2c_smbus_write_byte_data(client, FSA9480_REG_MANSW1, path);
@@ -547,12 +600,14 @@ void fsa9480_manual_switching(int path)
 		return;
 	}
 
+#ifdef CONFIG_S5PC110_DEMPSEY_BOARD
 	if(local_usbsw->dev_id == 0)
 	{
 		local_usbsw->mansw = (data | 0x03);
 		data |= 0x03;
 	}
 	else
+#endif
 	local_usbsw->mansw = data;
 
 	ret = i2c_smbus_write_byte_data(client, FSA9480_REG_MANSW1, data);
@@ -572,9 +627,7 @@ void fsa9480_enable_spk()
 {
 	#if defined(CONFIG_S5PC110_KEPLER_BOARD)
 		fsa9480_manual_switching(SWITCH_PORT_AUDIO);
-	#elif defined(CONFIG_S5PC110_HAWK_BOARD)
-		fsa9480_manual_switching(SWITCH_PORT_VAUDIO);
-	#elif defined(CONFIG_S5PC110_DEMPSEY_BOARD)						// mr work 
+	#elif defined(CONFIG_S5PC110_HAWK_BOARD) || defined(CONFIG_S5PC110_DEMPSEY_BOARD) ||defined (CONFIG_S5PC110_VIBRANTPLUS_BOARD)
 		fsa9480_manual_switching(SWITCH_PORT_VAUDIO);
 	#else
 		fsa9480_manual_switching(SWITCH_PORT_AUDIO);
@@ -609,9 +662,10 @@ static void fsa9480_detect_dev(struct fsa9480_usbsw *usbsw)
 			if (pdata->usb_cb)
 				pdata->usb_cb(FSA9480_ATTACHED);
 			if (usbsw->mansw) {
+#ifdef CONFIG_S5PC110_DEMPSEY_BOARD
 				if(usbsw->dev_id == 0)
 					usbsw->mansw = usbsw->mansw | 0x03;
-
+#endif
 				ret = i2c_smbus_write_byte_data(client,
 					FSA9480_REG_MANSW1, usbsw->mansw);
 				if (ret < 0)
@@ -632,6 +686,7 @@ static void fsa9480_detect_dev(struct fsa9480_usbsw *usbsw)
 #endif
 			
 			if (usbsw->mansw) {
+#ifdef CONFIG_S5PC110_DEMPSEY_BOARD
 				if(usbsw->dev_id == 0)
 				{
 					ret = i2c_smbus_write_byte_data(client,	FSA9480_REG_MANSW1, (SW_UART | 0x03));
@@ -642,13 +697,16 @@ static void fsa9480_detect_dev(struct fsa9480_usbsw *usbsw)
 				}
 				else
 				{
-					ret = i2c_smbus_write_byte_data(client,
-						FSA9480_REG_MANSW1, SW_UART);
-					if (ret < 0)
-						dev_err(&client->dev,
-							"%s: err %d\n", __func__, ret);
-				}
+#endif
+				ret = i2c_smbus_write_byte_data(client,
+					FSA9480_REG_MANSW1, SW_UART);
+				if (ret < 0)
+					dev_err(&client->dev,
+						"%s: err %d\n", __func__, ret);
 			}
+#ifdef CONFIG_S5PC110_DEMPSEY_BOARD
+			}
+#endif
 		/* CHARGER */
 		} else if (val1 & DEV_T1_CHARGER_MASK) {
 			if (pdata->charger_cb)
@@ -664,10 +722,14 @@ static void fsa9480_detect_dev(struct fsa9480_usbsw *usbsw)
 		} else if (val2 & DEV_AV) {
 
 #ifdef CONFIG_VIDEO_MHL_V1
-		printk(KERN_ERR "FSA MHL Attach");
-		printk("mhl_cable_status = %d \n", mhl_cable_status);
 
-		FSA9480_MhlSwitchSel(1);
+		if(!MHL_INIT_COND)
+			queue_delayed_work(mhl_workqueue, &local_usbsw->mhl_work, msecs_to_jiffies(5 * 1000));
+		else{
+			FSA9480_MhlSwitchSel(1);		
+			printk(KERN_ERR "FSA MHL Attach");
+			printk("mhl_cable_status = %d \n", mhl_cable_status);
+		}
 #else
 			
 			if (pdata->deskdock_cb)
@@ -721,9 +783,9 @@ static void fsa9480_detect_dev(struct fsa9480_usbsw *usbsw)
 				pdata->cardock_cb(FSA9480_ATTACHED);
 			
 			MicroJigUARTOnStatus = 1;
-#if defined(CONFIG_S5PC110_KEPLER_BOARD) || defined(CONFIG_S5PC110_DEMPSEY_BOARD) 	// || defined(CONFIG_S5PC110_DEMPSEY_BOARD) // mr work 
+#if defined(CONFIG_S5PC110_KEPLER_BOARD) || defined(CONFIG_S5PC110_DEMPSEY_BOARD) || defined(CONFIG_S5PC110_VIBRANTPLUS_BOARD) // mr work 
 		fsa9480_enable_spk();	 //HDLNC_OPK_20110307
-#elif defined(CONFIG_S5PC110_HAWK_BOARD)|| defined (CONFIG_S5PC110_VIBRANTPLUS_BOARD)// mr work //subhransu revisit
+#elif defined(CONFIG_S5PC110_HAWK_BOARD)// mr work //subhransu revisit
 			if(max8998_check_vdcin())
 			{
 				fsa9480_enable_spk();	 //HDLNC_OPK_20110307
@@ -790,7 +852,17 @@ static void fsa9480_detect_dev(struct fsa9480_usbsw *usbsw)
 
 #ifdef CONFIG_VIDEO_MHL_V1
 		printk("FSA MHL Detach\n");
+
+		if (FSA9480_AudioDockConnectionStatus) //Rajucm: AudioDock Detach
+		{
+			FSA9480_AudioDockDisable();
+		}
+		else//Rajucm: MHL Cable Detach
+		{
 		FSA9480_MhlSwitchSel(0);
+			mhl_cable_status=0;
+			
+		}
 #else 		
 			if (pdata->deskdock_cb)
 				pdata->deskdock_cb(FSA9480_DETACHED);
@@ -815,7 +887,6 @@ static void fsa9480_detect_dev(struct fsa9480_usbsw *usbsw)
 #endif
 			if (pdata->cardock_cb)
 				pdata->cardock_cb(FSA9480_DETACHED);
-#if defined (CONFIG_S5PC110_HAWK_BOARD) || defined (CONFIG_S5PC110_KEPLER_BOARD) || defined(CONFIG_S5PC110_DEMPSEY_BOARD) || defined (CONFIG_S5PC110_VIBRANTPLUS_BOARD)// mr work 
 			ret = i2c_smbus_read_byte_data(client,FSA9480_REG_CTRL);
 			if (ret < 0)
 				dev_err(&client->dev,
@@ -826,7 +897,6 @@ static void fsa9480_detect_dev(struct fsa9480_usbsw *usbsw)
 			if (ret < 0)
 				dev_err(&client->dev,
 					"%s: err %d\n", __func__, ret);
-#endif	
 		}
 	}
 
@@ -840,12 +910,13 @@ static void fsa9480_reg_init(struct fsa9480_usbsw *usbsw)
 	unsigned int ctrl = CON_MASK;
 	int ret;
 
-			
+#ifdef CONFIG_S5PC110_DEMPSEY_BOARD
+		
 	usbsw->dev_id = i2c_smbus_read_byte_data(client, FSA9480_REG_DEVID);
 	if (usbsw->dev_id < 0)
 		dev_err(&client->dev, "%s: err %d\n", __func__, usbsw->dev_id);
 	printk("fsa9480_reg_init = %d\n", usbsw->dev_id);
-
+#endif
 
 	/* mask interrupts (unmask attach/detach only) */
 	ret = i2c_smbus_write_word_data(client, FSA9480_REG_INT1_MASK, 0x1ffc);
@@ -923,6 +994,24 @@ static int fsa9480_irq_init(struct fsa9480_usbsw *usbsw)
 
 	return 0;
 }
+#if defined(CONFIG_VIDEO_MHL_V1)
+static void mhl_workqueue_func(struct work_struct *work)
+{
+	int i;
+	int als;
+
+	printk("mhl_workqueue_func\n");
+	if(!MHL_INIT_COND)
+				queue_delayed_work(mhl_workqueue, &local_usbsw->mhl_work, msecs_to_jiffies(1000));	
+	else{	
+		FSA9480_MhlSwitchSel(1);		
+		printk(KERN_ERR "FSA MHL Attach");
+		printk("mhl_cable_status = %d \n", mhl_cable_status);
+	}
+	return; 
+
+}
+#endif
 
 static int __devinit fsa9480_probe(struct i2c_client *client,
 			 const struct i2c_device_id *id)
@@ -952,6 +1041,15 @@ static int __devinit fsa9480_probe(struct i2c_client *client,
 	if (usbsw->pdata->cfg_gpio)
 		usbsw->pdata->cfg_gpio();
 
+#if defined(CONFIG_VIDEO_MHL_V1)
+	wake_lock_init(&MHL_wake_lock, WAKE_LOCK_SUSPEND, "MHL_wake");
+
+	mhl_workqueue = create_singlethread_workqueue("mhl_work");
+	if (!mhl_workqueue)
+		return -ENOMEM;
+
+	INIT_DELAYED_WORK(&local_usbsw->mhl_work,mhl_workqueue_func);
+#endif
 	fsa9480_reg_init(usbsw);
 
 	ret = fsa9480_irq_init(usbsw);

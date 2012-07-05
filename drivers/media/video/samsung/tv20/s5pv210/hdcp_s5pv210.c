@@ -53,6 +53,23 @@
 #define AUTHPRINTK(fmt, args...)
 #endif
 
+extern  int s5p_hpd_get_state(void);
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
+#ifdef CONFIG_HDMI_HPD
+//Rajucm: This is to exit work in no hdmi cable conncted
+#define EXIT_WORK_ON_CABLE_DISCONNECTION \
+do{\
+	if(!s5p_hpd_get_state())	{\
+		HDCPPRINTK("HDMI Cable Removed##\n\r");\
+		return false;\
+	}\
+}while(0)
+#endif
+#else
+#define EXIT_WORK_ON_CABLE_DISCONNECTION  do{}while(0)
+#endif
+
+
 enum hdmi_run_mode {
 	DVI_MODE,
 	HDMI_MODE
@@ -135,6 +152,11 @@ struct s5p_hdcp_info {
 	enum hdcp_state		auth_status;
 
 	struct work_struct	work;
+
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD) //Rajucm: P110225-1327_system_lockup
+        struct workqueue_struct *hdcp_workqueue;
+#endif
+
 };
 
 static struct s5p_hdcp_info hdcp_info = {
@@ -187,11 +209,19 @@ static struct s5p_hdcp_info hdcp_info = {
 
 #define TRANSMIT_EVERY_VSYNC	(0x1 << 1)
 
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
+extern u8 hdcp_protocol_status; // 0 - hdcp stopped, 1 - hdcp started, 2 - hdcp reset
+#endif
+
 /* must be checked */
 static bool sw_reset;
 static bool is_dvi;
 static bool av_mute;
 static bool audio_en;
+
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
+static int test_counter =0;
+#endif
 
 void s5p_hdmi_set_audio(bool en)
 {
@@ -297,7 +327,9 @@ static bool write_an(void)
 {
 	int ret = 0;
 	u8 an[AN_SIZE+1];
-
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
+	mdelay(100);//Rajucm
+#endif
 	an[0] = HDCP_An;
 
 	an[1] = readb(hdmi_base + S5P_HDCP_An_0_0);
@@ -512,7 +544,9 @@ static bool read_bksv(void)
 		while (!read_again_bksv()) {
 
 			count++;
-
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
+			EXIT_WORK_ON_CABLE_DISCONNECTION;
+#endif
 			mdelay(200);
 
 			if (count == 14)
@@ -534,7 +568,9 @@ static bool compare_r_val(void)
 	u16 i;
 
 	for (i = 0; i < R_VAL_RETRY_CNT; i++) {
-
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
+                EXIT_WORK_ON_CABLE_DISCONNECTION;
+#endif
 		if (hdcp_info.auth_status < AKSV_WRITE_DONE) {
 			ret = false;
 			break;
@@ -629,6 +665,26 @@ void set_sw_hpd(bool level)
 /*
  * Reset Authentication
  */
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD)
+void hdcp_reset_timer_func(u32 cond)
+{
+	static DEFINE_TIMER(hdcp_restart_Timer, hdcp_reset_timer_func, 0, 0);//Rajucm
+	if (cond)
+	{
+		HDCPPRINTK("[TIMER:]## Timer Sart\n");
+		mod_timer(&hdcp_restart_Timer, jiffies + msecs_to_jiffies(500));//rajucm: 500miliseconds
+		return;
+	}
+	HDCPPRINTK("[TIMER:]##hdcp_info.auth_status = %d   cable sate = %d\n", hdcp_info.auth_status, s5p_hpd_get_state());
+        hdcp_info.auth_status = NOT_AUTHENTICATED; //to avoid frequent GScreen problem
+	if (/*(hdcp_info.auth_status 	== NOT_AUTHENTICATED)&&*/ s5p_hpd_get_state())
+	{
+		printk("[TIMER:] ## Ready to restart HDCP after 1 sec ### \n");
+		//s5p_hdmi_mute_en(true);
+		sw_hpd_enable(true);//Rajucm:to restart hdcp
+	}
+}
+#endif
 void reset_authentication(void)
 {
 	u8 reg;
@@ -639,34 +695,69 @@ void reset_authentication(void)
 	hdcp_info.event 	= HDCP_EVENT_STOP;
 	hdcp_info.auth_status 	= NOT_AUTHENTICATED;
 
-
+#if !defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
 	/* Disable hdcp */
 	writeb(0x0, hdmi_base + S5P_HDCP_CTRL1);
 	writeb(0x0, hdmi_base + S5P_HDCP_CTRL2);
-
+#endif
 	s5p_hdmi_mute_en(true);
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
+	/* set hdcp_int disable */
+	reg = readb(hdmi_base + S5P_STATUS_EN);
+	reg &= ~(WTFORACTIVERX_INT_OCCURRED | WATCHDOG_INT_OCCURRED |
+		EXCHANGEKSV_INT_OCCURRED | UPDATE_RI_INT_OCCURRED);
+	writeb(reg, hdmi_base + S5P_STATUS_EN);
+#endif
 
-	/* Disable encryption */
+#if !defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
+/* Disable encryption */
 	HDCPPRINTK("Stop Encryption by reset!!\n");
 	writeb(HDCP_ENC_DIS, hdmi_base + S5P_ENC_EN);
 
 	HDCPPRINTK("Now reset authentication\n");
+#else
+
+	/* clear all result */
+	writeb(CLEAR_ALL_RESULTS, hdmi_base + S5P_HDCP_CHECK_RESULT);
+#endif
 
 	/* disable hdmi status enable reg. */
 	reg = readb(hdmi_base + S5P_STATUS_EN);
 	reg &= HDCP_STATUS_DIS_ALL;
 	writeb(reg, hdmi_base + S5P_STATUS_EN);
 
+#if !defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
 	/* clear all result */
 
 	writeb(CLEAR_ALL_RESULTS, hdmi_base + S5P_HDCP_CHECK_RESULT);
+#else
+	/* clear all status pending */
+	reg = readb(hdmi_base + S5P_STATUS);
+	reg |= HDCP_STATUS_EN_ALL;
+	writeb(reg, hdmi_base + S5P_STATUS);
+#endif
+
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
+	/* Disable encryption */
+	writeb(HDCP_ENC_DIS, hdmi_base + S5P_ENC_EN);
+
+	/* Disable hdcp */
+	writeb(0x0, hdmi_base + S5P_HDCP_CTRL1);
+	writeb(0x0, hdmi_base + S5P_HDCP_CTRL2);
+        sw_reset = true;
+        reg = s5p_hdmi_get_enabled_interrupt();		//NAGSM_Android_SEL_Kernel_Aakash_20101214
+#endif
+
 
 	/*
 	 * 1. Mask HPD plug and unplug interrupt
 	 * disable HPD INT
 	*/
+
+#if !defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
 	sw_reset = true;
 	reg = s5p_hdmi_get_enabled_interrupt();
+#endif
 
 	s5p_hdmi_disable_interrupts(HDMI_IRQ_HPD_PLUG);
 	s5p_hdmi_disable_interrupts(HDMI_IRQ_HPD_UNPLUG);
@@ -683,12 +774,20 @@ void reset_authentication(void)
 	/* 5. Disable software HPD */
 	sw_hpd_enable(false);
 
+
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD)	
+//NAGSM_Android_SEL_Kernel_Aakash_20101214
 	/* 6. Unmask HPD plug and unplug interrupt */
 	if (reg & 1<<HDMI_IRQ_HPD_PLUG)
 		s5p_hdmi_enable_interrupts(HDMI_IRQ_HPD_PLUG);
 	if (reg & 1<<HDMI_IRQ_HPD_UNPLUG)
 		s5p_hdmi_enable_interrupts(HDMI_IRQ_HPD_UNPLUG);
-
+#else	
+//NAGSM_Android_SEL_Kernel_Aakash_20101214
+	/* 6. Unmask HPD plug and unplug interrupt */
+	s5p_hdmi_enable_interrupts(HDMI_IRQ_HPD_PLUG);
+	s5p_hdmi_enable_interrupts(HDMI_IRQ_HPD_UNPLUG);
+#endif		//NAGSM_Android_SEL_Kernel_Aakash_20101214
 
 	sw_reset = false;
 
@@ -700,7 +799,10 @@ void reset_authentication(void)
 	writel(readl(hdmi_base + S5P_HDMI_CON_0) | HDMI_EN,
 		hdmi_base + S5P_HDMI_CON_0);
 #endif
+
+#if !defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
 	writel(CLEAR_ALL_RESULTS, hdmi_base + S5P_HDCP_CHECK_RESULT);
+#endif
 
 	/* set hdcp_int enable */
 	reg = readb(hdmi_base + S5P_STATUS_EN);
@@ -714,6 +816,12 @@ void reset_authentication(void)
 	writeb(CP_DESIRED_EN, hdmi_base + S5P_HDCP_CTRL1);
 
 	spin_unlock_irq(&hdcp_info.reset_lock);
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD)
+	//hdcp_reset_timer_func(1); //workaround timer implimentation to start safe hdcp authentication
+	//msleep(10);
+	s5p_hdmi_enable_interrupts(HDMI_IRQ_HDCP);
+	sw_hpd_enable(true);//Rajucm:to restart hdcp
+#endif
 }
 
 /*
@@ -813,13 +921,19 @@ static int hdcp_loadkey(void)
  */
 static void start_encryption(void)
 {
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
+	u32 time_out = 1000;
+#else
 	u32 time_out = 100;
+#endif
 
 	if (readl(hdmi_base + S5P_HDCP_CHECK_RESULT) ==
 		Ri_MATCH_RESULT__YES) {
 
 		while (time_out) {
-
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
+                        EXIT_WORK_ON_CABLE_DISCONNECTION;
+#endif
 			if (readl(hdmi_base + S5P_STATUS) & AUTHENTICATED) {
 				writel(HDCP_ENC_ENABLE,
 					hdmi_base + S5P_ENC_EN);
@@ -853,6 +967,7 @@ static int check_repeater(void)
 	u8 rx_v[SHA_1_HASH_SIZE] = {0};
 	u8 ksv_list[HDCP_MAX_DEVS*HDCP_KSV_SIZE] = {0};
 
+	u32 hdcp_ctrl = 0;
 	u32 dev_cnt;
 	u32 stat;
 
@@ -862,6 +977,9 @@ static int check_repeater(void)
 	memset(ksv_list, 0x0, HDCP_MAX_DEVS*HDCP_KSV_SIZE);
 
 	while (j <= 50) {
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
+	        EXIT_WORK_ON_CABLE_DISCONNECTION;
+#endif
 		ret = ddc_read(HDCP_Bcaps,
 				bcaps, BCAPS_SIZE);
 
@@ -1061,6 +1179,9 @@ static bool try_read_receiver(void)
 
 	for (i = 0; i < 400; i++) {
 
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
+		EXIT_WORK_ON_CABLE_DISCONNECTION;
+#endif
 		msleep(250);
 
 		if (hdcp_info.auth_status != RECEIVER_READ_READY) {
@@ -1097,6 +1218,16 @@ bool __s5p_stop_hdcp(void)
 	s5p_hdmi_disable_interrupts(HDMI_IRQ_HPD_PLUG);
 	s5p_hdmi_disable_interrupts(HDMI_IRQ_HPD_UNPLUG);
 #endif
+       /* Cancel hdcp work during mhl disconnection        
+        * to save it from reassigning in the workqueue
+        */  
+        #if defined(CONFIG_S5PC110_DEMPSEY_BOARD)
+	cancel_work_sync(&hdcp_info.work);
+	udelay(500);
+        #endif
+
+
+
 	s5p_hdmi_disable_interrupts(HDMI_IRQ_HDCP);
 
 	hdcp_protocol_status = 0;
@@ -1134,7 +1265,11 @@ bool __s5p_stop_hdcp(void)
 	/* disable encryption */
 	HDCPPRINTK("Stop Encryption by Stop!!\n");
 	writel(HDCP_ENC_DISABLE, hdmi_base + S5P_ENC_EN);
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
+        //s5p_hdmi_mute_en(true); //Rajucm: avoid displaying green screen for hdcp disabled Image
+#else
 	s5p_hdmi_mute_en(true);
+#endif
 
 	/* clear result */
 	writel(Ri_MATCH_RESULT__NO, hdmi_base + S5P_HDCP_CHECK_RESULT);
@@ -1207,12 +1342,21 @@ bool __s5p_start_hdcp(void)
 	sw_hpd_enable(false);
 	set_sw_hpd(false);
 
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD) 
+//NAGSM_Android_SEL_Kernel_Aakash_20101214
 	/* 6. Unmask HPD plug and unplug interrupt */
 
 	if (reg & 1<<HDMI_IRQ_HPD_PLUG)
 		s5p_hdmi_enable_interrupts(HDMI_IRQ_HPD_PLUG);
 	if (reg & 1<<HDMI_IRQ_HPD_UNPLUG)
 		s5p_hdmi_enable_interrupts(HDMI_IRQ_HPD_UNPLUG);
+
+#else
+	/* 6. Unmask HPD plug and unplug interrupt */
+	s5p_hdmi_enable_interrupts(HDMI_IRQ_HPD_PLUG);
+	s5p_hdmi_enable_interrupts(HDMI_IRQ_HPD_UNPLUG);
+#endif 	
+//NAGSM_Android_SEL_Kernel_Aakash_20101214
 
 	sw_reset = false;
 	HDCPPRINTK("Stop Encryption by Start!!\n");
@@ -1246,7 +1390,8 @@ bool __s5p_start_hdcp(void)
 	writel(sfr_val, hdmi_base + S5P_HDCP_CTRL1);
 
 	s5p_hdmi_enable_interrupts(HDMI_IRQ_HDCP);
-
+	set_sw_hpd(true);
+        sw_hpd_enable(true);//Rajucm:to restart hdcp
 	if (!read_bcaps()) {
 		HDCPPRINTK("can't read ddc port!\n");
 		reset_authentication();
@@ -1371,6 +1516,9 @@ static void second_auth_start_bh(void)
 				break;
 			}
 
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD)
+			EXIT_WORK_ON_CABLE_DISCONNECTION;
+#endif
 			mdelay(100);
 
 			if (!hdcp_info.hdcp_enable) {
@@ -1702,7 +1850,11 @@ irqreturn_t __s5p_hdcp_irq_handler(int irq)
 
 	hdcp_info.event |= event;
 
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD) //Rajucm: P110225-1327_system_lockup
+	queue_work(hdcp_info.hdcp_workqueue, &hdcp_info.work);
+#else
 	schedule_work(&hdcp_info.work);
+#endif
 
 	spin_unlock_irq(&hdcp_info.lock);
 
@@ -1742,8 +1894,10 @@ int __s5p_hdcp_init(void)
 	spin_lock_init(&hdcp_info.lock);
 	spin_lock_init(&hdcp_info.reset_lock);
 
-	s5p_hdmi_register_isr((hdmi_isr)__s5p_hdcp_irq_handler,
-		(u8)HDMI_IRQ_HDCP);
+#if defined(CONFIG_S5PC110_DEMPSEY_BOARD) //Rajucm: P110225-1327_system_lockup
+        hdcp_info.hdcp_workqueue = create_singlethread_workqueue("hdcp_workqueue");
+#endif
+	s5p_hdmi_register_isr((hdmi_isr)__s5p_hdcp_irq_handler, (u8)HDMI_IRQ_HDCP);
 
 	return 0;
 }

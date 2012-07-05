@@ -509,11 +509,14 @@ static int s5p_tv_v4l2_s_fmt_vid_out(struct file *file, void *fh,
 
 			switch (vparam.pix_fmt.pixelformat) {
 
+			case 0: //VPROC_SRC_COLOR_NV12
 			case V4L2_PIX_FMT_NV12:
 				/* linear */
 				s5ptv_status.src_color =
 				VPROC_SRC_COLOR_NV12;
 				break;
+			
+			case 2: //VPROC_SRC_COLOR_TILE_NV12
 			case V4L2_PIX_FMT_NV12T:
 				/* tiled */
 				s5ptv_status.src_color =

@@ -42,6 +42,30 @@
 #define MHL_HPD_INT 1  //Rajucm: Desable Hw HPD
 #endif
 
+#if defined (CONFIG_S5PC110_DEMPSEY_BOARD)
+static struct device *hpd_dev;
+struct class *hpd_class;
+static ssize_t hdmi_state_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int count=0;
+	unsigned int connected = 0;
+        connected = s5p_hpd_get_state(); 
+        count = sprintf(buf,"%d\n", connected );
+        HPDIFPRINTK("%x\n",connected);
+        return count;
+}
+
+static ssize_t hdmi_state_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t size)
+{
+        printk("input data --> %s\n", buf);
+        return size;
+}
+
+static DEVICE_ATTR(hdmi_state, S_IRUGO | S_IWUSR | S_IWGRP, hdmi_state_show, hdmi_state_store);
+#endif
+
+
+
 static struct hpd_struct hpd_struct;
 
 static int last_hpd_state;
@@ -118,6 +142,7 @@ void mhl_hpd_handle(bool en)
 	schedule_work(&hpd_work);
 	printk("[HPD_IF] mhl_hpd_handle status: %d  \n", atomic_read(&hpd_struct.state));
 }
+EXPORT_SYMBOL(mhl_hpd_handle);
 #endif //Rajucm
 
 int s5p_hpd_set_hdmiint(void)
@@ -396,6 +421,20 @@ int __init s5p_hpd_init(void)
 		return -1;
 	}
 
+#if defined (CONFIG_S5PC110_DEMPSEY_BOARD)
+        hpd_class= class_create(THIS_MODULE, "s5p-hpd");
+        if (IS_ERR(hpd_class))
+                pr_err("Failed to create class(s5p-hpd)!\n");
+
+        hpd_dev= device_create(hpd_class, NULL, 0, NULL, "s5p_hpd_device");
+        if (IS_ERR(hpd_dev))
+                pr_err("Failed to create device(s5p_hpd_device)!\n");
+
+        if (device_create_file(hpd_dev,&dev_attr_hdmi_state) < 0)
+                printk(KERN_ERR "Failed to create device file(%s)!\n", dev_attr_hdmi_state.attr.name);
+#endif
+
+
 	return 0;
 }
 
@@ -406,5 +445,6 @@ static void __exit s5p_hpd_exit(void)
 
 module_init(s5p_hpd_init);
 module_exit(s5p_hpd_exit);
+
 
 

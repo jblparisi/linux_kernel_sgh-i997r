@@ -59,7 +59,8 @@ spinlock_t	lock_hdmi;
 
 #define I2C_INT_CLEAR		(0<<4)
 
-#define I2C_CLK			(0<<6)
+//#define I2C_CLK			(0<<6)
+#define I2C_CLK			(0x41)
 #define I2C_CLK_PEND_INT	(I2C_CLK|I2C_INT_CLEAR|I2C_INT)
 
 #define I2C_ENABLE		(1<<4)
@@ -324,7 +325,7 @@ int hdmi_phy_down(bool on, u8 addr, u8 offset, u8 *read_buffer)
 
 int __s5p_hdmi_phy_power(bool on)
 {
-#if !defined(CONFIG_MACH_P1)
+#if !(defined(CONFIG_MACH_P1) || defined(CONFIG_S5PC110_DEMPSEY_BOARD))
     /* for the case that
       - only analog tv is supported
       - and the power for the hdmi phy is not supported*/
@@ -471,10 +472,17 @@ s32 hdmi_phy_config(enum phy_freq freq, enum s5p_hdmi_color_depth cd)
 }
 #endif
 	hdmi_corereset();
+        int count = 0;
 
 	do {
+		if(count <= 1000)
 		reg = readb(hdmi_base + HDMI_PHY_STATUS);
+		else 
+		break;
+		udelay(10);
+		count++;
 	} while (!(reg & HDMI_PHY_READY));
+
 
 	writeb(I2C_CLK_PEND_INT, i2c_hdmi_phy_base + I2C_HDMI_CON);
 	/* disable */
@@ -1828,8 +1836,10 @@ bool __s5p_hdmi_start(enum s5p_hdmi_audio_type hdmi_audio_type,
 	writel(readl(hdmi_base + S5P_HDMI_CON_0) | temp_reg,
 	       hdmi_base + S5P_HDMI_CON_0);
 
+#ifndef CONFIG_S5PC110_DEMPSEY_BOARD
 #ifdef CONFIG_HDMI_HPD
 	s5p_hpd_set_hdmiint();
+#endif
 #endif
 
 #if 1
@@ -2021,6 +2031,10 @@ int s5p_hdmi_register_isr(hdmi_isr isr, u8 irq_num)
 	return 0;
 }
 EXPORT_SYMBOL(s5p_hdmi_register_isr);
+
+extern void mhl_hpd_handle(bool en);
+
+void s5p_hdmi_clear_pending(enum s5p_tv_hdmi_interrrupt intr);
 
 irqreturn_t __s5p_hdmi_irq(int irq, void *dev_id)
 {

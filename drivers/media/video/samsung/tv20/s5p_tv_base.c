@@ -252,6 +252,36 @@ static irqreturn_t __s5p_hpd_irq(int irq, void *dev_id)
 #endif
 
 #ifdef CONFIG_CPU_S5PV210
+#ifdef CONFIG_S5PC110_DEMPSEY_BOARD
+bool tv_power_status = false;
+extern u8 mhl_cable_status;
+
+void __s5p_hdmi_phy_power_offtest()
+{
+
+	if(!mhl_cable_status)			
+	{
+		printk("__s5p_hdmi_phy_power_offtest mhl_cable_status= %d\n",mhl_cable_status );
+		s5p_tv_clk_gate(true);
+		__s5p_tv_poweron();
+		/* on */
+		clk_enable(s5ptv_status.i2c_phy_clk);
+		__s5p_hdmi_phy_power(true);
+
+		clk_set_parent(s5ptv_status.sclk_mixer,
+					s5ptv_status.sclk_dac);
+		clk_set_parent(s5ptv_status.sclk_hdmi,
+					s5ptv_status.sclk_pixel);
+
+		__s5p_hdmi_phy_power(false);
+		clk_disable(s5ptv_status.i2c_phy_clk);
+		 __s5p_tv_poweroff();
+
+		s5p_tv_clk_gate(false);
+	}
+
+}
+#endif
 int tv_phy_power(bool on)
 {
 	if (on) {
@@ -259,12 +289,18 @@ int tv_phy_power(bool on)
 		/* on */
 		clk_enable(s5ptv_status.i2c_phy_clk);
 		__s5p_hdmi_phy_power(true);
+#ifdef CONFIG_S5PC110_DEMPSEY_BOARD
+		tv_power_status = true;
+#endif
 
 	} else {
 		/*
 		 * for preventing hdmi hang up when restart
 		 * switch to internal clk - SCLK_DAC, SCLK_PIXEL
 		 */
+#ifdef CONFIG_S5PC110_DEMPSEY_BOARD
+		tv_power_status = false;
+#endif
 		clk_set_parent(s5ptv_status.sclk_mixer,
 					s5ptv_status.sclk_dac);
 		clk_set_parent(s5ptv_status.sclk_hdmi,
@@ -480,7 +516,6 @@ static int s5p_tv_v_open(struct file *file)
 		ret =  -EBUSY;
 		goto drv_used;
 	}
-
 	s5p_tv_clk_gate(true);
 	tv_phy_power(true);
 
@@ -885,7 +920,7 @@ void s5p_handle_cable(void)
 	char *envp[2];
 	int env_offset = 0;
 
-	printk(KERN_INFO "%s....start", __func__);
+	printk(KERN_INFO "%s....start\n", __func__);
 
 #if defined (CONFIG_S5PC110_DEMPSEY_BOARD)
         //Temporary Disable till PDA HDMI is up //NAGSM_Android_SEL_Kernel_Aakash_20110606
@@ -895,6 +930,10 @@ void s5p_handle_cable(void)
 		(s5ptv_status.tvout_param.out_mode != TVOUT_OUTPUT_DVI))
 		return;
 #endif
+
+	if (s5ptv_status.suspend_status)
+		return;
+
 
 	bool previous_hpd_status = s5ptv_status.hpd_status;
 #ifdef CONFIG_HDMI_HPD
@@ -1008,6 +1047,11 @@ void s5p_handle_cable(void)
 	}
 }
 
+#if defined (CONFIG_S5PC110_DEMPSEY_BOARD)
+bool S5p_TvProbe_status = false;//Rajucm
+#endif
+
+
 #define S5P_TVMAX_CTRLS		ARRAY_SIZE(s5p_tvout)
 /*
  *  Probe
@@ -1028,12 +1072,24 @@ static int __devinit s5p_tv_probe(struct platform_device *pdev)
 		return PTR_ERR(s5ptv_status.tv_regulator);
 	}
 
+
+#if defined (CONFIG_S5PC110_DEMPSEY_BOARD)
+	s5ptv_status.tv_tv = regulator_get(NULL, "usb_io");
+	if (IS_ERR(s5ptv_status.tv_tv)) {
+		printk(KERN_ERR "%s %d: failed to get resource %s\n",
+				__func__, __LINE__, "s3c-tv20 tv");
+		return PTR_ERR(s5ptv_status.tv_tv);
+	}
+#endif
+
+
 	s5ptv_status.tv_tvout = regulator_get(NULL, "tvout");
 	if (IS_ERR(s5ptv_status.tv_tvout)) {
 		printk(KERN_ERR "%s %d: failed to get resource %s\n",
 				__func__, __LINE__, "s3c-tv20 tvout");
 		return PTR_ERR(s5ptv_status.tv_tvout);
 	}
+
 
 #ifdef CONFIG_MACH_P1
 	s5ptv_status.tv_tv = regulator_get(NULL, "tv");
@@ -1186,6 +1242,9 @@ static int __devinit s5p_tv_probe(struct platform_device *pdev)
 	mutex_init(mutex_for_fo);
 
 #ifdef CONFIG_CPU_S5PV210
+#if defined (CONFIG_S5PC110_DEMPSEY_BOARD)
+	__s5p_tv_poweron();
+#endif
 	/* added for phy cut off when boot up */
 	clk_enable(s5ptv_status.i2c_phy_clk);
 
@@ -1193,8 +1252,15 @@ static int __devinit s5p_tv_probe(struct platform_device *pdev)
 	clk_disable(s5ptv_status.i2c_phy_clk);
 
 	s5p_tv_clk_gate(false);
+#if defined (CONFIG_S5PC110_DEMPSEY_BOARD)
+	__s5p_tv_poweroff();
+#endif
 #endif
 	printk(KERN_INFO "%s TV Probing is done\n", __func__);
+
+#if defined (CONFIG_S5PC110_DEMPSEY_BOARD)
+	S5p_TvProbe_status = true; //Rajucm
+#endif
 	return 0;
 
 #ifdef CONFIG_TV_FB
@@ -1389,6 +1455,15 @@ void s5p_tv_late_resume(struct early_suspend *h)
 		}
 #endif
 	}
+
+	if (s5ptv_status.tvout_param.out_mode == TVOUT_OUTPUT_HDMI
+		|| s5ptv_status.tvout_param.out_mode
+		== TVOUT_OUTPUT_HDMI_RGB	   
+		|| s5ptv_status.tvout_param.out_mode
+		== TVOUT_OUTPUT_DVI)  {
+		s5p_handle_cable();   
+	}
+
 	mutex_unlock(mutex_for_fo);
 	BASEPRINTK("()--\n");
 	return ;
@@ -1466,3 +1541,4 @@ module_exit(s5p_tv_exit);
 MODULE_AUTHOR("SangPil Moon");
 MODULE_DESCRIPTION("SS5PC1XX TVOUT driver");
 MODULE_LICENSE("GPL");
+

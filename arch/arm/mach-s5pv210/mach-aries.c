@@ -423,13 +423,13 @@ static struct s3cfb_lcd s6e63m0 = {
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC1 (9900 * SZ_1K)
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC2 (12288 * SZ_1K)
 #if !defined(CONFIG_ARIES_NTT)   
-/*#if  defined(CONFIG_S5PC110_DEMPSEY_BOARD)// NASW_20110622, miranda.lee : Dempsey - support playing 1080p 	
+#if  defined(CONFIG_S5PC110_DEMPSEY_BOARD)/* Dempsey - support playing 1080p */	
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC0 (36864 * SZ_1K)
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC1 (36864 * SZ_1K)
-#else*/
+#else
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC0 (32768 * SZ_1K)
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC1 (32768 * SZ_1K)
-//#endif
+#endif
 #else    /* NTT - support playing 1080p */
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC0 (36864 * SZ_1K)
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC1 (36864 * SZ_1K)
@@ -689,6 +689,7 @@ static struct regulator_init_data aries_ldo3_data = {
 		.state_mem	= {
 			.disabled = 1,
 		},
+
 	},
 	.num_consumer_supplies	= ARRAY_SIZE(ldo3_consumer),
 	.consumer_supplies	= ldo3_consumer,
@@ -5327,6 +5328,9 @@ void ldo8_control_and_hdmi_phyoff_test()
 
 
 extern int tv_power_status; 
+#ifdef CONFIG_S5PC110_DEMPSEY_BOARD
+extern void __s5p_hdmi_phy_power_offtest();
+#endif
 static struct regulator *cam_mipi_c_regulator;
 static struct regulator *cam_mipi_regulator;
 void s3c_csis_power(int enable)
@@ -5356,12 +5360,10 @@ int err;
 			if (err) {
 					pr_err("Failed to enable cam_mipi_regulator\n");
 	}
-	/*	if(!tv_power_status)
-		{
-			ldo8_control_and_hdmi_phyoff_test();
+	
+		__s5p_hdmi_phy_power_offtest();
 		
-		
-	}*/
+
 	}
 	else {
 	cam_mipi_regulator = regulator_get(NULL, "cam_vmipi");
@@ -5543,6 +5545,9 @@ static struct i2c_board_info i2c_devs4[] __initdata = {
 
 /* I2C1 */
 static struct i2c_board_info i2c_devs1[] __initdata = {
+        {
+                I2C_BOARD_INFO("s5p_ddc",(0x74>>1)),    
+        },
 };
 
 #ifdef CONFIG_TOUCHSCREEN_QT602240

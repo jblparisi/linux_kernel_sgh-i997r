@@ -71,6 +71,8 @@ int SII9234_i2c_status = 0;
 static struct regulator *mhl_buck; 		//VSIL_1.2A & VSIL_1.2C Connected to MAX8893
 static struct regulator *mhl_ldo5;		//VCC_3.3V_MHL Connected to MAX8893
 static struct regulator *mhl_ldo4;	        //VCC_1.8V_MHL Connected to MAX8893
+static struct regulator *tv_csis;
+
 EXPORT_SYMBOL(SII9234_i2c_status);
 
 struct work_struct SiI9234_int_work;
@@ -260,7 +262,7 @@ static ssize_t MHD_check_write(struct device *dev, struct device_attribute *attr
 	return size;
 }
 
-static DEVICE_ATTR(MHD_file, S_IRUGO | S_IWUSR | S_IWOTH | S_IXOTH, MHD_check_read, MHD_check_write);
+static DEVICE_ATTR(MHD_file, S_IRUGO | S_IWUSR | S_IWGRP, MHD_check_read, MHD_check_write);	//modify permissions
 
 
 struct i2c_client* get_sii9234_client(u8 device_id)
@@ -654,6 +656,13 @@ static int  sii9234_pre_cfg_power(void)
 			return rc;
 		}	
 
+		tv_csis = regulator_get(NULL,"usb_io");
+		if (IS_ERR(tv_csis)) {
+			rc = PTR_ERR(tv_csis);
+			pr_err("%s: l2 get failed (%d)\n", __func__, rc);
+			return rc;
+		}	
+
 		return 0;
 
 }
@@ -698,6 +707,13 @@ void sii9234_cfg_power(bool on)
 			return;
 		}
 
+		rc = regulator_enable(tv_csis);		//vcc_
+		if (rc) {
+			pr_err("%s: vcc 1.8v vreg enable failed (%d)\n", __func__, rc);
+			printk("regulator_get_voltage() mhl_buck %d", regulator_get_voltage(mhl_ldo5));
+			return;
+		}
+
 		printk("sii9234_cfg_power on\n");
 	}
 	else
@@ -716,6 +732,12 @@ void sii9234_cfg_power(bool on)
 		}
 		
 		rc = regulator_disable(mhl_ldo5);		//VCC_3.3V_MHL
+		if (rc) {
+			pr_err("%s: mhl_ldo5 vreg enable failed (%d)\n", __func__, rc);
+			return;
+		}
+
+		rc = regulator_disable(tv_csis);		//VCC_3.3V_MHL
 		if (rc) {
 			pr_err("%s: mhl_ldo4 vreg enable failed (%d)\n", __func__, rc);
 			return;
