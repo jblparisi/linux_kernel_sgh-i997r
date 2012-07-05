@@ -7422,7 +7422,6 @@ static struct platform_device *aries_devices[] __initdata = {
 	&s3c_device_i2c13,  // hdlnc_bp_ytkwon : 20100301
 #if ! (defined (CONFIG_S5PC110_HAWK_BOARD) || defined (CONFIG_S5PC110_KEPLER_BOARD) || defined(CONFIG_S5PC110_VIBRANTPLUS_BOARD)|| defined (CONFIG_S5PC110_DEMPSEY_BOARD))	
 	&s3c_device_i2c14, /* nfc sensor */
-<<<<<<< HEAD
 
 #endif	
 
@@ -7444,15 +7443,13 @@ static struct platform_device *aries_devices[] __initdata = {
 #endif
 
 
-#ifdef CONFIG_USB_S3C_OTG_HOST
-       &s3c_device_usb_otghcd,
-=======
 #if defined CONFIG_USB_S3C_OTG_HOST
 	&s3c_device_usb_otghcd,
 #endif
+
 #if defined CONFIG_USB_DWC_OTG
 	&s3c_device_usb_dwcotg,
->>>>>>> 2a1d0ac... updated to build 5
+
 #endif
 
 #ifdef CONFIG_USB_GADGET
