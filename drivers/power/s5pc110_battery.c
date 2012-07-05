@@ -109,11 +109,12 @@ struct chg_data {
 };
 
 static bool lpm_charging_mode;
-<<<<<<< HEAD
-extern struct usb_gadget *usb_gadget_p;
-=======
 static bool disable_charger;
->>>>>>> 2a1d0ac... updated to build 5
+
+extern struct usb_gadget *usb_gadget_p;
+
+static bool disable_charger;
+
 
 static char *supply_list[] = {
 	"battery",
@@ -256,11 +257,9 @@ static struct device_attribute s3c_battery_attrs[] = {
 	SEC_BATTERY_ATTR(charging_mode_booting),
 	SEC_BATTERY_ATTR(batt_temp_check),
 	SEC_BATTERY_ATTR(batt_full_check),
-<<<<<<< HEAD
-=======
 	SEC_BATTERY_ATTR(batt_type),
 	SEC_BATTERY_ATTR(disable_charger),
->>>>>>> 2a1d0ac... updated to build 5
+
 };
 
 extern u8 FSA9480_Get_JIG_Status(void);
@@ -2489,7 +2488,7 @@ static __devinit int max8998_charger_probe(struct platform_device *pdev)
 		vADC_regulator_intialized = 1;
 	}
 
-<<<<<<< HEAD
+
 	if (IS_ERR_OR_NULL(vADC_regulator) ) 
 	{
 		pr_err("vADC_regulator  not initialized\n");
@@ -2507,10 +2506,10 @@ static __devinit int max8998_charger_probe(struct platform_device *pdev)
 
 	check_lpm_charging_mode(chg);
   
-=======
+
 	disable_charger = 0;
 
->>>>>>> 2a1d0ac... updated to build 5
+
 	/* init power supplier framework */
 	ret = power_supply_register(&pdev->dev, &chg->psy_bat);
 	if (ret) {
